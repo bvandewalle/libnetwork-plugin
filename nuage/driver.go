@@ -217,9 +217,9 @@ func (d *Driver) Join(r *sdk.JoinRequest) (*sdk.JoinResponse, error) {
 
 	// Create Port Metadata
 	portMetadata := make(map[port.MetadataKey]string)
-	portMetadata[port.MetadataKeyDomain] = "Domain"
-	portMetadata[port.MetadataKeyNetwork] = "Subnet"
-	portMetadata[port.MetadataKeyZone] = "Zone"
+	portMetadata[port.MetadataKeyDomain] = networkInfo.nuage.Domain
+	portMetadata[port.MetadataKeyNetwork] = networkInfo.nuage.NuageSubnetID
+	portMetadata[port.MetadataKeyZone] = networkInfo.nuage.Zone
 	portMetadata[port.MetadataKeyNetworkType] = "ipv4"
 	portMetadata[port.MetadataKeyStaticIP] = endpointInfo.stringaddr[:len(endpointInfo.stringaddr)-3]
 
@@ -231,8 +231,8 @@ func (d *Driver) Join(r *sdk.JoinRequest) (*sdk.JoinResponse, error) {
 
 	// Create VM metadata
 	vmMetadata := make(map[entity.MetadataKey]string)
-	vmMetadata[entity.MetadataKeyUser] = "admin"
-	vmMetadata[entity.MetadataKeyEnterprise] = "Enterprise"
+	vmMetadata[entity.MetadataKeyUser] = networkInfo.nuage.User
+	vmMetadata[entity.MetadataKeyEnterprise] = networkInfo.nuage.Enterprise
 
 	// Define ports associated with the VM
 	ports := []string{vmInfo["entityport"]}
