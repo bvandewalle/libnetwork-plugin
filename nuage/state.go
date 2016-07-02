@@ -32,12 +32,11 @@ type network struct {
 type networkTable map[string]*network
 
 type endpoint struct {
-	id         string
-	mac        net.HardwareAddr
-	stringmac  string
-	addr       *net.IPNet
-	stringaddr string
-	srcName    string
+	id      string
+	mac     net.HardwareAddr
+	addr    net.IP
+	mask    *net.IPNet
+	srcName string
 }
 
 type endpointTable map[string]*endpoint

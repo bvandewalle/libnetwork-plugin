@@ -123,35 +123,59 @@ func (d *Driver) DeleteNetwork(r *sdk.DeleteNetworkRequest) error {
 
 // CreateEndpoint creates a new MACVLAN Endpoint
 func (d *Driver) CreateEndpoint(r *sdk.CreateEndpointRequest) (*sdk.CreateEndpointResponse, error) {
+
+	var mac net.HardwareAddr
+	var ip net.IP
+	var mask *net.IPNet
+
 	endID := r.EndpointID
-	log.Printf("The container subnet for this context is [ %s ]", r.Interface.Address)
-	// Request an IP address from libnetwork based on the cidr scope
-	// TODO: Add a user defined static ip addr option in Docker v1.10
-	containerAddress := r.Interface.Address
-	if containerAddress == "" {
+	log.Printf("The container IP and MAC requested for this endpoint is [ %s , %s]", r.Interface.Address, r.Interface.MacAddress)
+
+	if r.Interface.Address == "" {
 		return nil, fmt.Errorf("Unable to obtain an IP address from libnetwork default ipam")
 	}
+
+	// Parsing IP as Standard Net objects.
+	ip, mask, err := net.ParseCIDR(r.Interface.Address)
+	if err != nil {
+		log.Println("Failed to parse address")
+	}
+
 	// generate a mac address for the pending container
-	mac := util.GenerateMAC()
+	// Honor MAC if explicitely requested, Generate one if not
+	if r.Interface.MacAddress == "" {
+		mac, err = makeMac()
+		if err != nil {
+			log.Println("Couldnt generate MAC")
+			return nil, nil
+		}
+	} else {
+		mac, err = net.ParseMAC(r.Interface.MacAddress)
+		if err != nil {
+			log.Println("Couldnt parse MAC")
+			return nil, nil
+		}
+	}
 
-	log.Printf("Allocated container IP: [ %s ]", containerAddress)
-	log.Printf("Allocated container MAC: [ %s ]", r.Interface.MacAddress)
-	log.Printf("Generated container MAC: [ %s ]", mac)
-	// IP addrs comes from libnetwork ipam via user 'docker network' parameters
+	log.Printf("Allocated container IP: [ %s ]", ip.String())
+	log.Printf("Allocated/Generated container MAC: [ %s ][ %s ]", r.Interface.MacAddress, mac.String())
 
+	// Respond with the MAC/IP Address
 	res := &sdk.CreateEndpointResponse{
 		Interface: &sdk.EndpointInterface{
 			//Address:    containerAddress,
-			MacAddress: mac,
+			MacAddress: mac.String(),
 		},
 	}
-	log.Printf("Create endpoint response: %+v", res)
-	log.Printf("Create endpoint %s %+v", endID, res)
 
+	log.Printf("Create endpoint response: %+v", res)
+
+	// Keep the state locally for this endpoint
 	ep := &endpoint{
-		id:         endID,
-		stringmac:  mac,
-		stringaddr: containerAddress,
+		id:   endID,
+		addr: ip,
+		mac:  mac,
+		mask: mask,
 	}
 	d.network(r.NetworkID).addEndpoint(ep)
 
@@ -179,20 +203,24 @@ func (d *Driver) EndpointInfo(r *sdk.InfoRequest) (*sdk.InfoResponse, error) {
 func (d *Driver) Join(r *sdk.JoinRequest) (*sdk.JoinResponse, error) {
 
 	var vrsConnection vrssdk.VRSConnection
-	var err error
+
 	networkInfo, err := d.getNetwork(r.NetworkID)
 	endpointInfo, err := networkInfo.getEndpoint(r.EndpointID)
+	fmt.Println(endpointInfo.mac)
 
-	fmt.Println("Endpoint Info:")
-	fmt.Println(endpointInfo)
+	log.Printf("Join Request for Endpoint: %v to Network: %v ", endpointInfo, networkInfo)
 
-	if vrsConnection, err = vrssdk.NewConnection("10.31.1.195", 6633); err != nil {
+	vrsConnection, err = vrssdk.NewConnection("10.31.1.195", 6633)
+
+	if err != nil {
 		fmt.Println("Unable to connect to the VRS")
+		return nil, err
 	}
 
+	// Generate all the infos
 	vmInfo := make(map[string]string)
 	vmInfo["name"] = fmt.Sprintf("Test-VM-%d", rand.New(rand.NewSource(time.Now().UnixNano())).Intn(100))
-	vmInfo["mac"] = endpointInfo.stringmac
+	vmInfo["mac"] = endpointInfo.mac.String()
 	vmInfo["vmuuid"] = uuid.Generate().String()
 	vmInfo["entityport"] = internalPrefix + truncateID(r.EndpointID)
 	vmInfo["brport"] = basePrefix + truncateID(r.EndpointID)
@@ -201,6 +229,7 @@ func (d *Driver) Join(r *sdk.JoinRequest) (*sdk.JoinResponse, error) {
 	if err != nil {
 		fmt.Println("Unable to create veth pairs on VRS")
 	}
+	log.Printf("vmINFO: %v", vmInfo)
 
 	// Add the paired veth port to alubr0 on VRS
 	err = util.AddVETHPortToVRS(vmInfo["brport"], vmInfo["vmuuid"], vmInfo["name"])
@@ -221,7 +250,7 @@ func (d *Driver) Join(r *sdk.JoinRequest) (*sdk.JoinResponse, error) {
 	portMetadata[port.MetadataKeyNetwork] = networkInfo.nuage.NuageSubnetID
 	portMetadata[port.MetadataKeyZone] = networkInfo.nuage.Zone
 	portMetadata[port.MetadataKeyNetworkType] = "ipv4"
-	ip := endpointInfo.stringaddr[:len(endpointInfo.stringaddr)-3]
+	ip := endpointInfo.addr.String()
 	fmt.Println(ip)
 	portMetadata[port.MetadataKeyStaticIP] = ip
 

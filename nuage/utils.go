@@ -1,18 +1,29 @@
 package nuage
 
 import (
+	"crypto/rand"
+	"fmt"
 	"net"
 
 	log "github.com/Sirupsen/logrus"
 )
 
 // Generate a mac addr
-func makeMac(ip net.IP) string {
+func makeMac() (net.HardwareAddr, error) {
 	hw := make(net.HardwareAddr, 6)
+	buf := make([]byte, 4)
+
+	_, err := rand.Read(buf)
+	if err != nil {
+		fmt.Println("error:", err)
+		return nil, err
+	}
+
 	hw[0] = 0x7a
 	hw[1] = 0x42
-	copy(hw[2:], ip.To4())
-	return hw.String()
+	copy(hw[2:], buf)
+	return hw, nil
+
 }
 
 // Increment a subnet
