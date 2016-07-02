@@ -221,10 +221,12 @@ func (d *Driver) Join(r *sdk.JoinRequest) (*sdk.JoinResponse, error) {
 	portMetadata[port.MetadataKeyNetwork] = networkInfo.nuage.NuageSubnetID
 	portMetadata[port.MetadataKeyZone] = networkInfo.nuage.Zone
 	portMetadata[port.MetadataKeyNetworkType] = "ipv4"
-	portMetadata[port.MetadataKeyStaticIP] = endpointInfo.stringaddr[:len(endpointInfo.stringaddr)-3]
+	ip := endpointInfo.stringaddr[:len(endpointInfo.stringaddr)-3]
+	fmt.Println(ip)
+	portMetadata[port.MetadataKeyStaticIP] = ip
 
 	// Associate one veth port to entity
-	err = vrsConnection.CreatePort(vmInfo["entityport"], portAttributes, portMetadata)
+	err = vrsConnection.CreatePort(vmInfo["brport"], portAttributes, portMetadata)
 	if err != nil {
 		fmt.Printf("Unable to create entity port %v", err)
 	}
@@ -235,7 +237,7 @@ func (d *Driver) Join(r *sdk.JoinRequest) (*sdk.JoinResponse, error) {
 	vmMetadata[entity.MetadataKeyEnterprise] = networkInfo.nuage.Enterprise
 
 	// Define ports associated with the VM
-	ports := []string{vmInfo["entityport"]}
+	ports := []string{vmInfo["brport"]}
 
 	// Add entity to the VRS
 	// Add entity to the VRS
