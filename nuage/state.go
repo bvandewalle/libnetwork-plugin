@@ -2,9 +2,8 @@ package nuage
 
 import (
 	"fmt"
-	"sync"
-
 	"net"
+	"sync"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/libnetwork/types"
@@ -32,11 +31,12 @@ type network struct {
 type networkTable map[string]*network
 
 type endpoint struct {
-	id      string
-	mac     net.HardwareAddr
-	addr    net.IP
-	mask    *net.IPNet
-	srcName string
+	id        string
+	sandboxID string
+	mac       net.HardwareAddr
+	addr      net.IP
+	mask      *net.IPNet
+	srcName   string
 }
 
 type endpointTable map[string]*endpoint

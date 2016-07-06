@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"github.com/docker/distribution/uuid"
-	sdk "github.com/docker/go-plugins-helpers/network"
-	vrssdk "github.com/nuagenetworks/libvrsovsdb/api"
+	dockerSdk "github.com/docker/go-plugins-helpers/network"
+	vrsSdk "github.com/nuagenetworks/libvrsovsdb/api"
 	"github.com/nuagenetworks/libvrsovsdb/api/entity"
 	"github.com/nuagenetworks/libvrsovsdb/api/port"
-	"github.com/nuagenetworks/libvrsovsdb/test/util"
+	"github.com/samalba/dockerclient"
 )
 
 const (
@@ -28,7 +28,9 @@ const (
 
 // Driver is the Nuage Driver
 type Driver struct {
-	sdk.Driver
+	dockerSdk.Driver
+	dclient       dockerclient.DockerClient
+	vrsConnection vrsSdk.VRSConnection
 	sync.Mutex
 	networks networkTable
 }
@@ -36,15 +38,30 @@ type Driver struct {
 // NewDriver creates a new Nuage Driver
 func NewDriver(version string) (*Driver, error) {
 	log.Println("NewDriver called")
+
+	docker, err := dockerclient.NewDockerClient("unix:///var/run/docker.sock", nil)
+	if err != nil {
+		return nil, fmt.Errorf("could not connect to docker: %s", err)
+	}
+
+	vrsConnection, err := vrsSdk.NewConnection("10.31.1.195", 6633)
+
+	if err != nil {
+		fmt.Println("Unable to connect to the VRS")
+		return nil, err
+	}
+
 	d := &Driver{
-		networks: networkTable{},
+		networks:      networkTable{},
+		dclient:       *docker,
+		vrsConnection: vrsConnection,
 	}
 	return d, nil
 }
 
 // GetCapabilities tells libnetwork this driver is local scope
-func (d *Driver) GetCapabilities() (*sdk.CapabilitiesResponse, error) {
-	scope := &sdk.CapabilitiesResponse{Scope: sdk.LocalScope}
+func (d *Driver) GetCapabilities() (*dockerSdk.CapabilitiesResponse, error) {
+	scope := &dockerSdk.CapabilitiesResponse{Scope: dockerSdk.LocalScope}
 	log.Println("GetCapabilities")
 	return scope, nil
 }
@@ -59,7 +76,7 @@ func printNetworks(net networkTable) {
 }
 
 // CreateNetwork creates a new Network and links it to an Existing network based on the Options given
-func (d *Driver) CreateNetwork(r *sdk.CreateNetworkRequest) error {
+func (d *Driver) CreateNetwork(r *dockerSdk.CreateNetworkRequest) error {
 
 	var netCidr *net.IPNet
 	var netGw string
@@ -115,14 +132,14 @@ func (d *Driver) CreateNetwork(r *sdk.CreateNetworkRequest) error {
 }
 
 // DeleteNetwork deletes a network kn Libnetwork. The corresponding network in Nuage VSD is NOT deleted.
-func (d *Driver) DeleteNetwork(r *sdk.DeleteNetworkRequest) error {
+func (d *Driver) DeleteNetwork(r *dockerSdk.DeleteNetworkRequest) error {
 	log.Println("DeleteNetwork")
 	d.deleteNetwork(r.NetworkID)
 	return nil
 }
 
 // CreateEndpoint creates a new MACVLAN Endpoint
-func (d *Driver) CreateEndpoint(r *sdk.CreateEndpointRequest) (*sdk.CreateEndpointResponse, error) {
+func (d *Driver) CreateEndpoint(r *dockerSdk.CreateEndpointRequest) (*dockerSdk.CreateEndpointResponse, error) {
 
 	var mac net.HardwareAddr
 	var ip net.IP
@@ -161,8 +178,8 @@ func (d *Driver) CreateEndpoint(r *sdk.CreateEndpointRequest) (*sdk.CreateEndpoi
 	log.Printf("Allocated/Generated container MAC: [ %s ][ %s ]", r.Interface.MacAddress, mac.String())
 
 	// Respond with the MAC/IP Address
-	res := &sdk.CreateEndpointResponse{
-		Interface: &sdk.EndpointInterface{
+	res := &dockerSdk.CreateEndpointResponse{
+		Interface: &dockerSdk.EndpointInterface{
 			//Address:    containerAddress,
 			MacAddress: mac.String(),
 		},
@@ -183,7 +200,7 @@ func (d *Driver) CreateEndpoint(r *sdk.CreateEndpointRequest) (*sdk.CreateEndpoi
 }
 
 // DeleteEndpoint deletes a Nuage Endpoint
-func (d *Driver) DeleteEndpoint(r *sdk.DeleteEndpointRequest) error {
+func (d *Driver) DeleteEndpoint(r *dockerSdk.DeleteEndpointRequest) error {
 	log.Printf("Delete endpoint request: %+v", &r)
 	//TODO: null check cidr in case driver restarted and doesn't know the network to avoid panic
 	log.Printf("Delete endpoint %s", r.EndpointID)
@@ -191,56 +208,48 @@ func (d *Driver) DeleteEndpoint(r *sdk.DeleteEndpointRequest) error {
 }
 
 // EndpointInfo returns informatoin about a Nuage endpoint
-func (d *Driver) EndpointInfo(r *sdk.InfoRequest) (*sdk.InfoResponse, error) {
+func (d *Driver) EndpointInfo(r *dockerSdk.InfoRequest) (*dockerSdk.InfoResponse, error) {
 	log.Printf("Endpoint info request: %+v", &r)
-	res := &sdk.InfoResponse{
+	res := &dockerSdk.InfoResponse{
 		Value: make(map[string]string),
 	}
 	return res, nil
 }
 
 // Join creates a Nuage interface to be moved to the container netns
-func (d *Driver) Join(r *sdk.JoinRequest) (*sdk.JoinResponse, error) {
-
-	var vrsConnection vrssdk.VRSConnection
+func (d *Driver) Join(r *dockerSdk.JoinRequest) (*dockerSdk.JoinResponse, error) {
+	log.Printf("Join request: %+v", &r)
 
 	networkInfo, err := d.getNetwork(r.NetworkID)
 	endpointInfo, err := networkInfo.getEndpoint(r.EndpointID)
-	fmt.Println(endpointInfo.mac)
+	endpointInfo.sandboxID = uuid.Generate().String()
 
 	log.Printf("Join Request for Endpoint: %v to Network: %v ", endpointInfo, networkInfo)
 
-	vrsConnection, err = vrssdk.NewConnection("10.31.1.195", 6633)
-
-	if err != nil {
-		fmt.Println("Unable to connect to the VRS")
-		return nil, err
-	}
-
-	// Generate all the infos
-	vmInfo := make(map[string]string)
-	vmInfo["name"] = fmt.Sprintf("Test-VM-%d", rand.New(rand.NewSource(time.Now().UnixNano())).Intn(100))
-	vmInfo["mac"] = endpointInfo.mac.String()
-	vmInfo["vmuuid"] = uuid.Generate().String()
-	vmInfo["entityport"] = internalPrefix + truncateID(r.EndpointID)
-	vmInfo["brport"] = basePrefix + truncateID(r.EndpointID)
-	portList := []string{vmInfo["entityport"], vmInfo["brport"]}
-	err = util.CreateVETHPair(portList)
+	// ContainerInfo contains all the relevant parameter of the container instance that needs to be activated
+	containerInfo := make(map[string]string)
+	containerInfo["name"] = fmt.Sprintf("Test-VM-%d", rand.New(rand.NewSource(time.Now().UnixNano())).Intn(100))
+	containerInfo["mac"] = endpointInfo.mac.String()
+	containerInfo["vmuuid"] = endpointInfo.sandboxID
+	containerInfo["entityport"] = internalPrefix + truncateID(r.EndpointID)
+	containerInfo["brport"] = basePrefix + truncateID(r.EndpointID)
+	portList := []string{containerInfo["entityport"], containerInfo["brport"]}
+	err = createVETHPair(portList)
 	if err != nil {
 		fmt.Println("Unable to create veth pairs on VRS")
 	}
-	log.Printf("vmINFO: %v", vmInfo)
+	log.Printf("containerInfo: %v", containerInfo)
 
 	// Add the paired veth port to alubr0 on VRS
-	err = util.AddVETHPortToVRS(vmInfo["brport"], vmInfo["vmuuid"], vmInfo["name"])
+	err = addVETHPortToVRS(containerInfo["brport"], containerInfo["vmuuid"], containerInfo["name"])
 	if err != nil {
 		fmt.Println("Unable to add veth port to alubr0")
 	}
 
 	// Create Port Attributes
 	portAttributes := port.Attributes{
-		Platform: entity.TypeKVM,
-		MAC:      vmInfo["mac"],
+		Platform: entity.TypeDocker,
+		MAC:      containerInfo["mac"],
 		Bridge:   "alubr0",
 	}
 
@@ -255,7 +264,7 @@ func (d *Driver) Join(r *sdk.JoinRequest) (*sdk.JoinResponse, error) {
 	portMetadata[port.MetadataKeyStaticIP] = ip
 
 	// Associate one veth port to entity
-	err = vrsConnection.CreatePort(vmInfo["brport"], portAttributes, portMetadata)
+	err = d.vrsConnection.CreatePort(containerInfo["brport"], portAttributes, portMetadata)
 	if err != nil {
 		fmt.Printf("Unable to create entity port %v", err)
 	}
@@ -266,37 +275,36 @@ func (d *Driver) Join(r *sdk.JoinRequest) (*sdk.JoinResponse, error) {
 	vmMetadata[entity.MetadataKeyEnterprise] = networkInfo.nuage.Enterprise
 
 	// Define ports associated with the VM
-	ports := []string{vmInfo["brport"]}
+	ports := []string{containerInfo["brport"]}
 
 	// Add entity to the VRS
-	// Add entity to the VRS
-	entityInfo := vrssdk.EntityInfo{
-		UUID:     vmInfo["vmuuid"],
-		Name:     vmInfo["name"],
-		Type:     entity.TypeKVM,
+	entityInfo := vrsSdk.EntityInfo{
+		UUID:     containerInfo["vmuuid"],
+		Name:     containerInfo["name"],
+		Type:     entity.TypeDocker,
 		Ports:    ports,
 		Metadata: vmMetadata,
 	}
 
-	err = vrsConnection.AddEntity(entityInfo)
+	err = d.vrsConnection.AddEntity(entityInfo)
 	if err != nil {
 		fmt.Printf("Unable to add entity to VRS %v", err)
 	}
 
 	// Notify VRS that VM has completed booted
-	err = vrsConnection.PostEntityEvent(vmInfo["vmuuid"], entity.EventCategoryStarted, entity.EventStartedBooted)
+	err = d.vrsConnection.PostEntityEvent(containerInfo["vmuuid"], entity.EventCategoryStarted, entity.EventStartedBooted)
 
 	if err != nil {
 		fmt.Printf("Problem sending VRS notification %v", err)
 	}
 
 	// SrcName gets renamed to DstPrefix on the container iface
-	ifname := &sdk.InterfaceName{
-		SrcName:   vmInfo["entityport"],
+	ifname := &dockerSdk.InterfaceName{
+		SrcName:   containerInfo["entityport"],
 		DstPrefix: containerIfacePrefix,
 	}
 
-	res := &sdk.JoinResponse{
+	res := &dockerSdk.JoinResponse{
 		InterfaceName: *ifname,
 		//Gateway:               getID.gateway,
 		DisableGatewayService: true,
@@ -307,20 +315,53 @@ func (d *Driver) Join(r *sdk.JoinRequest) (*sdk.JoinResponse, error) {
 }
 
 // Leave removes a Nuage Endpoint from a container
-func (d *Driver) Leave(r *sdk.LeaveRequest) error {
+func (d *Driver) Leave(r *dockerSdk.LeaveRequest) error {
 	log.Printf("Leave request: %+v", &r)
 	log.Printf("Leave %s:%s", r.NetworkID, r.EndpointID)
+
+	networkInfo, err := d.getNetwork(r.NetworkID)
+	endpointInfo, err := networkInfo.getEndpoint(r.EndpointID)
+
+	// ContainerInfo contains all the relevant parameter of the container instance that needs to be activated
+	containerInfo := make(map[string]string)
+	containerInfo["mac"] = endpointInfo.mac.String()
+	containerInfo["vmuuid"] = endpointInfo.sandboxID
+	containerInfo["entityport"] = internalPrefix + truncateID(r.EndpointID)
+	containerInfo["brport"] = basePrefix + truncateID(r.EndpointID)
+
+	err = d.vrsConnection.RemoveEntity(containerInfo["vmuuid"])
+	if err != nil {
+		return fmt.Errorf("Unable to remove the entity from OVSDB table %v", err)
+	}
+
+	// Performing cleanup of port/entity on VRS
+	err = d.vrsConnection.DestroyPort(containerInfo["brport"])
+	if err != nil {
+		return fmt.Errorf("Unable to delete port from OVSDB table %v", err)
+	}
+
+	// Purging out the veth port from VRS alubr0
+	err = removeVETHPortFromVRS(containerInfo["brport"])
+	if err != nil {
+		return fmt.Errorf("Unable to delete veth port as part of cleanup from alubr0 %v", err)
+	}
+
+	// Cleaning up veth paired ports from VRS
+	err = deleteVETHPair(containerInfo["brport"], containerInfo["entityport"])
+	if err != nil {
+		return fmt.Errorf("Unable to delete veth pairs as a part of cleanup on VRS %v", err)
+	}
 
 	return nil
 }
 
 // DiscoverNew is not used by local scoped drivers
-func (d *Driver) DiscoverNew(r *sdk.DiscoveryNotification) error {
+func (d *Driver) DiscoverNew(r *dockerSdk.DiscoveryNotification) error {
 	return nil
 }
 
 // DiscoverDelete is not used by local scoped drivers
-func (d *Driver) DiscoverDelete(r *sdk.DiscoveryNotification) error {
+func (d *Driver) DiscoverDelete(r *dockerSdk.DiscoveryNotification) error {
 	return nil
 }
 
