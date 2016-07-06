@@ -47,8 +47,7 @@ func NewDriver(version string) (*Driver, error) {
 	vrsConnection, err := vrsSdk.NewConnection("10.31.1.195", 6633)
 
 	if err != nil {
-		fmt.Println("Unable to connect to the VRS")
-		return nil, err
+		return nil, fmt.Errorf("Couldn't connect to VRS: %s", err)
 	}
 
 	d := &Driver{
@@ -194,7 +193,20 @@ func (d *Driver) CreateEndpoint(r *dockerSdk.CreateEndpointRequest) (*dockerSdk.
 		mac:  mac,
 		mask: mask,
 	}
-	d.network(r.NetworkID).addEndpoint(ep)
+
+	networkInfo, err := d.getNetwork(r.NetworkID)
+
+	if err != nil {
+		// Init any existing libnetwork networks
+		d.existingNetChecks()
+
+		networkInfo, err = d.getNetwork(r.NetworkID)
+		if err != nil {
+			return nil, fmt.Errorf("error getting network ID [ %s ]. Run 'docker network ls' or 'docker network create' Err: %v", r.NetworkID, err)
+		}
+	}
+
+	networkInfo.addEndpoint(ep)
 
 	return res, nil
 }
@@ -221,6 +233,17 @@ func (d *Driver) Join(r *dockerSdk.JoinRequest) (*dockerSdk.JoinResponse, error)
 	log.Printf("Join request: %+v", &r)
 
 	networkInfo, err := d.getNetwork(r.NetworkID)
+
+	if err != nil {
+		// Init any existing libnetwork networks
+		d.existingNetChecks()
+
+		networkInfo, err = d.getNetwork(r.NetworkID)
+		if err != nil {
+			return nil, fmt.Errorf("error getting network ID [ %s ]. Run 'docker network ls' or 'docker network create' Err: %v", r.NetworkID, err)
+		}
+	}
+
 	endpointInfo, err := networkInfo.getEndpoint(r.EndpointID)
 	endpointInfo.sandboxID = uuid.Generate().String()
 
@@ -363,6 +386,58 @@ func (d *Driver) DiscoverNew(r *dockerSdk.DiscoveryNotification) error {
 // DiscoverDelete is not used by local scoped drivers
 func (d *Driver) DiscoverDelete(r *dockerSdk.DiscoveryNotification) error {
 	return nil
+}
+
+// existingNetChecks checks for networks that already exist in libnetwork cache and add them to this process.
+func (d *Driver) existingNetChecks() {
+	// Request all networks on the endpoint without any filters
+	existingNets, err := d.dclient.ListNetworks("")
+	if err != nil {
+		fmt.Printf("unable to retrieve existing networks: %v", err)
+	}
+	var netCidr *net.IPNet
+	var netGW string
+	for _, n := range existingNets {
+		// Only add the nuage nets.
+		if n.Driver == "nuage" {
+			for _, v4 := range n.IPAM.Config {
+				netGW = v4.Gateway
+				netCidr, err = parseIPNet(v4.Subnet)
+				if err != nil {
+					fmt.Printf("invalid cidr address in network [ %s ]: %v", v4.Subnet, err)
+				}
+			}
+
+			nuage := &nuageInfo{}
+
+			nw := &network{
+				id:        n.ID,
+				endpoints: endpointTable{},
+				cidr:      netCidr,
+				gateway:   netGW,
+				nuage:     nuage,
+			}
+
+			// Parse docker network -o opts
+			for key, val := range n.Options {
+				log.Printf("Libnetwork Opts Sent: [ %s ] Value: [ %s ]", key, val)
+				// Parse -o host_iface from libnetwork generic opts
+				switch key {
+				case "enterprise":
+					nuage.Enterprise = val
+				case "domain":
+					nuage.Domain = val
+				case "zone":
+					nuage.Zone = val
+				case "subnet":
+					nuage.NuageSubnetID = val
+				case "user":
+					nuage.User = val
+				}
+				d.addNetwork(nw)
+			}
+		}
+	}
 }
 
 func truncateID(id string) string {

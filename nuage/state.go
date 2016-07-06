@@ -21,8 +21,6 @@ type network struct {
 	id        string
 	endpoints endpointTable
 	gateway   string
-	ifaceOpt  string
-	modeOpt   string
 	nuage     *nuageInfo
 	sync.Mutex
 	cidr *net.IPNet
