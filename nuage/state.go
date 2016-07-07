@@ -39,7 +39,7 @@ type endpoint struct {
 
 type endpointTable map[string]*endpoint
 
-func (d *Driver) getNetwork(id string) (*network, error) {
+func (d *driver) getNetwork(id string) (*network, error) {
 	d.Lock()
 	defer d.Unlock()
 	if id == "" {
@@ -81,7 +81,7 @@ func (n *network) getEndpoint(eid string) (*endpoint, error) {
 	return nil, nil
 }
 
-func (d *Driver) network(nid string) *network {
+func (d *driver) network(nid string) *network {
 	d.Lock()
 	networks := d.networks
 	d.Unlock()
@@ -92,20 +92,20 @@ func (d *Driver) network(nid string) *network {
 	return n
 }
 
-func (d *Driver) addNetwork(n *network) {
+func (d *driver) addNetwork(n *network) {
 	d.Lock()
 	d.networks[n.id] = n
 	d.Unlock()
 }
 
-func (d *Driver) deleteNetwork(nid string) {
+func (d *driver) deleteNetwork(nid string) {
 	d.Lock()
 	delete(d.networks, nid)
 	d.Unlock()
 }
 
 // Safely return a slice of existng networks
-func (d *Driver) getNetworks() []*network {
+func (d *driver) getNetworks() []*network {
 	d.Lock()
 	defer d.Unlock()
 	ls := make([]*network, 0, len(d.networks))

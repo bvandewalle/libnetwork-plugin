@@ -27,7 +27,7 @@ const (
 )
 
 // Driver is the Nuage Driver
-type Driver struct {
+type driver struct {
 	dockerSdk.Driver
 	dclient       dockerclient.DockerClient
 	vrsConnection vrsSdk.VRSConnection
@@ -36,7 +36,7 @@ type Driver struct {
 }
 
 // NewDriver creates a new Nuage Driver
-func NewDriver(version string) (*Driver, error) {
+func NewDriver(version string) (dockerSdk.Driver, error) {
 	log.Println("NewDriver called")
 
 	docker, err := dockerclient.NewDockerClient("unix:///var/run/docker.sock", nil)
@@ -50,7 +50,7 @@ func NewDriver(version string) (*Driver, error) {
 		return nil, fmt.Errorf("Couldn't connect to VRS: %s", err)
 	}
 
-	d := &Driver{
+	d := &driver{
 		networks:      networkTable{},
 		dclient:       *docker,
 		vrsConnection: vrsConnection,
@@ -59,15 +59,17 @@ func NewDriver(version string) (*Driver, error) {
 }
 
 // GetCapabilities tells libnetwork this driver is local scope
-func (d *Driver) GetCapabilities() (*dockerSdk.CapabilitiesResponse, error) {
+func (d *driver) GetCapabilities() (*dockerSdk.CapabilitiesResponse, error) {
 	scope := &dockerSdk.CapabilitiesResponse{Scope: dockerSdk.LocalScope}
 	log.Println("GetCapabilities")
+
 	return scope, nil
 }
 
 //Simple func to print all the networks and related Nuage information
 func printNetworks(net networkTable) {
 	log.Printf("%d Existing networks", len(net))
+
 	for _, v := range net {
 		log.Printf("Network ID: %s", v.id)
 		log.Printf("Nuage Info: Enterprise: %s - User: %s - Domain: %s - Zone: %s - Subnet: %s ", v.nuage.Enterprise, v.nuage.User, v.nuage.Domain, v.nuage.Zone, v.nuage.NuageSubnetID)
@@ -75,15 +77,17 @@ func printNetworks(net networkTable) {
 }
 
 // CreateNetwork creates a new Network and links it to an Existing network based on the Options given
-func (d *Driver) CreateNetwork(r *dockerSdk.CreateNetworkRequest) error {
+func (d *driver) CreateNetwork(r *dockerSdk.CreateNetworkRequest) (err error) {
 
 	var netCidr *net.IPNet
 	var netGw string
-	var err error
+
 	log.Printf("Network Create Called: [ %+v ]", r)
+
 	for _, v4 := range r.IPv4Data {
 		netGw = v4.Gateway
 		_, netCidr, err = net.ParseCIDR(v4.Pool)
+
 		if err != nil {
 			return err
 		}
@@ -102,26 +106,33 @@ func (d *Driver) CreateNetwork(r *dockerSdk.CreateNetworkRequest) error {
 	//Getting all the options from the User
 	for k, v := range r.Options {
 		log.Println(k, v)
-		if k == "com.docker.network.generic" {
-			if genericOpts, ok := v.(map[string]interface{}); ok {
-				for key, val := range genericOpts {
-					log.Printf("Libnetwork Opts Sent: [ %s ] Value: [ %s ]", key, val)
-					// Parse -o host_iface from libnetwork generic opts
-					switch key {
-					case "enterprise":
-						nuage.Enterprise = val.(string)
-					case "domain":
-						nuage.Domain = val.(string)
-					case "zone":
-						nuage.Zone = val.(string)
-					case "subnet":
-						nuage.NuageSubnetID = val.(string)
-					case "user":
-						nuage.User = val.(string)
-					}
 
-				}
+		if k != "com.docker.network.generic" {
+			continue
+		}
+
+		genericOpts, ok := v.(map[string]interface{})
+
+		if !ok {
+			continue
+		}
+
+		for key, val := range genericOpts {
+			log.Printf("Libnetwork Opts Sent: [ %s ] Value: [ %s ]", key, val)
+			// Parse -o host_iface from libnetwork generic opts
+			switch key {
+			case "enterprise":
+				nuage.Enterprise = val.(string)
+			case "domain":
+				nuage.Domain = val.(string)
+			case "zone":
+				nuage.Zone = val.(string)
+			case "subnet":
+				nuage.NuageSubnetID = val.(string)
+			case "user":
+				nuage.User = val.(string)
 			}
+
 		}
 	}
 
@@ -131,14 +142,14 @@ func (d *Driver) CreateNetwork(r *dockerSdk.CreateNetworkRequest) error {
 }
 
 // DeleteNetwork deletes a network kn Libnetwork. The corresponding network in Nuage VSD is NOT deleted.
-func (d *Driver) DeleteNetwork(r *dockerSdk.DeleteNetworkRequest) error {
+func (d *driver) DeleteNetwork(r *dockerSdk.DeleteNetworkRequest) error {
 	log.Println("DeleteNetwork")
 	d.deleteNetwork(r.NetworkID)
 	return nil
 }
 
 // CreateEndpoint creates a new MACVLAN Endpoint
-func (d *Driver) CreateEndpoint(r *dockerSdk.CreateEndpointRequest) (*dockerSdk.CreateEndpointResponse, error) {
+func (d *driver) CreateEndpoint(r *dockerSdk.CreateEndpointRequest) (*dockerSdk.CreateEndpointResponse, error) {
 
 	var mac net.HardwareAddr
 	var ip net.IP
@@ -153,6 +164,7 @@ func (d *Driver) CreateEndpoint(r *dockerSdk.CreateEndpointRequest) (*dockerSdk.
 
 	// Parsing IP as Standard Net objects.
 	ip, mask, err := net.ParseCIDR(r.Interface.Address)
+
 	if err != nil {
 		log.Println("Failed to parse address")
 	}
@@ -212,7 +224,7 @@ func (d *Driver) CreateEndpoint(r *dockerSdk.CreateEndpointRequest) (*dockerSdk.
 }
 
 // DeleteEndpoint deletes a Nuage Endpoint
-func (d *Driver) DeleteEndpoint(r *dockerSdk.DeleteEndpointRequest) error {
+func (d *driver) DeleteEndpoint(r *dockerSdk.DeleteEndpointRequest) error {
 	log.Printf("Delete endpoint request: %+v", &r)
 	//TODO: null check cidr in case driver restarted and doesn't know the network to avoid panic
 	log.Printf("Delete endpoint %s", r.EndpointID)
@@ -220,7 +232,7 @@ func (d *Driver) DeleteEndpoint(r *dockerSdk.DeleteEndpointRequest) error {
 }
 
 // EndpointInfo returns informatoin about a Nuage endpoint
-func (d *Driver) EndpointInfo(r *dockerSdk.InfoRequest) (*dockerSdk.InfoResponse, error) {
+func (d *driver) EndpointInfo(r *dockerSdk.InfoRequest) (*dockerSdk.InfoResponse, error) {
 	log.Printf("Endpoint info request: %+v", &r)
 	res := &dockerSdk.InfoResponse{
 		Value: make(map[string]string),
@@ -229,7 +241,7 @@ func (d *Driver) EndpointInfo(r *dockerSdk.InfoRequest) (*dockerSdk.InfoResponse
 }
 
 // Join creates a Nuage interface to be moved to the container netns
-func (d *Driver) Join(r *dockerSdk.JoinRequest) (*dockerSdk.JoinResponse, error) {
+func (d *driver) Join(r *dockerSdk.JoinRequest) (*dockerSdk.JoinResponse, error) {
 	log.Printf("Join request: %+v", &r)
 
 	networkInfo, err := d.getNetwork(r.NetworkID)
@@ -258,9 +270,11 @@ func (d *Driver) Join(r *dockerSdk.JoinRequest) (*dockerSdk.JoinResponse, error)
 	containerInfo["brport"] = basePrefix + truncateID(r.EndpointID)
 	portList := []string{containerInfo["entityport"], containerInfo["brport"]}
 	err = createVETHPair(portList)
+
 	if err != nil {
 		fmt.Println("Unable to create veth pairs on VRS")
 	}
+
 	log.Printf("containerInfo: %v", containerInfo)
 
 	// Add the paired veth port to alubr0 on VRS
@@ -338,7 +352,7 @@ func (d *Driver) Join(r *dockerSdk.JoinRequest) (*dockerSdk.JoinResponse, error)
 }
 
 // Leave removes a Nuage Endpoint from a container
-func (d *Driver) Leave(r *dockerSdk.LeaveRequest) error {
+func (d *driver) Leave(r *dockerSdk.LeaveRequest) error {
 	log.Printf("Leave request: %+v", &r)
 	log.Printf("Leave %s:%s", r.NetworkID, r.EndpointID)
 
@@ -379,17 +393,17 @@ func (d *Driver) Leave(r *dockerSdk.LeaveRequest) error {
 }
 
 // DiscoverNew is not used by local scoped drivers
-func (d *Driver) DiscoverNew(r *dockerSdk.DiscoveryNotification) error {
+func (d *driver) DiscoverNew(r *dockerSdk.DiscoveryNotification) error {
 	return nil
 }
 
 // DiscoverDelete is not used by local scoped drivers
-func (d *Driver) DiscoverDelete(r *dockerSdk.DiscoveryNotification) error {
+func (d *driver) DiscoverDelete(r *dockerSdk.DiscoveryNotification) error {
 	return nil
 }
 
 // existingNetChecks checks for networks that already exist in libnetwork cache and add them to this process.
-func (d *Driver) existingNetChecks() {
+func (d *driver) existingNetChecks() {
 	// Request all networks on the endpoint without any filters
 	existingNets, err := d.dclient.ListNetworks("")
 	if err != nil {
