@@ -23,6 +23,15 @@ const (
 	minMTU               = 68
 )
 
+//Config is the driver conig
+type Config struct {
+	VrsEndpoint    string
+	VrsPort        int
+	VrsBridge      string
+	DockerEndpoint string
+	LogLevel       string
+}
+
 // Driver is the Nuage Driver
 type driver struct {
 	dockerSdk.Driver
@@ -33,15 +42,15 @@ type driver struct {
 }
 
 // NewDriver creates a new Nuage Driver
-func NewDriver(version string) (dockerSdk.Driver, error) {
+func NewDriver(version string, config Config) (dockerSdk.Driver, error) {
 	log.Println("NewDriver called")
 
-	docker, err := dockerclient.NewDockerClient("unix:///var/run/docker.sock", nil)
+	docker, err := dockerclient.NewDockerClient(config.DockerEndpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("could not connect to docker: %s", err)
 	}
 
-	vrsConnection, err := vrsSdk.NewConnection("10.31.1.195", 6633)
+	vrsConnection, err := vrsSdk.NewConnection(config.VrsEndpoint, config.VrsPort)
 
 	if err != nil {
 		return nil, fmt.Errorf("Couldn't connect to VRS: %s", err)
