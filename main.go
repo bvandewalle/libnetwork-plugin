@@ -15,7 +15,7 @@ const (
 
 func main() {
 	log.Warnf("Starting Nuage LibNetwork Experimental Plugin version %s", version)
-	log.Warnf("LocalSope version Driver ")
+	log.Warnf("Global and Local scope version Driver ")
 
 	//setdefault
 	conf := nuage.Config{
@@ -24,6 +24,7 @@ func main() {
 		VrsBridge:      "alubr0",
 		DockerEndpoint: "unix:///var/run/docker.sock",
 		LogLevel:       "Info",
+		Scope:          "global",
 	}
 	if _, err := toml.DecodeFile("nuage.cfg", &conf); err != nil {
 		fmt.Println("Couldnt load config")

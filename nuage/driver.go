@@ -30,10 +30,12 @@ type Config struct {
 	VrsBridge      string
 	DockerEndpoint string
 	LogLevel       string
+	Scope          string
 }
 
 // Driver is the Nuage Driver
 type driver struct {
+	conf Config
 	dockerSdk.Driver
 	dclient       dockerclient.DockerClient
 	vrsConnection vrsSdk.VRSConnection
@@ -60,14 +62,22 @@ func NewDriver(version string, config Config) (dockerSdk.Driver, error) {
 		networks:      networkTable{},
 		dclient:       *docker,
 		vrsConnection: vrsConnection,
+		conf:          config,
 	}
 	return d, nil
 }
 
 // GetCapabilities tells libnetwork this driver is local scope
 func (d *driver) GetCapabilities() (*dockerSdk.CapabilitiesResponse, error) {
-	scope := &dockerSdk.CapabilitiesResponse{Scope: dockerSdk.LocalScope}
-	log.Debugf("GetCapabilities")
+	log.Debugf("GetCapabilities Called")
+	var capa string
+	if d.conf.Scope == "local" {
+		capa = dockerSdk.LocalScope
+	}
+	if d.conf.Scope == "global" {
+		capa = dockerSdk.GlobalScope
+	}
+	scope := &dockerSdk.CapabilitiesResponse{Scope: capa}
 	return scope, nil
 }
 
