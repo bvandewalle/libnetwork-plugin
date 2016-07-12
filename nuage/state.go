@@ -12,7 +12,7 @@ import (
 type nuageInfo struct {
 	NuageSubnetID string
 	User          string
-	Enterprise    string
+	Organization  string
 	Domain        string
 	Zone          string
 }

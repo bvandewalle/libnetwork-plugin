@@ -86,7 +86,7 @@ func printNetworks(net networkTable) {
 	log.Debugf("%d Existing networks", len(net))
 
 	for _, v := range net {
-		log.Debugf("Network %s CIDR: %s Nuage Info: Enterprise: %s - User: %s - Domain: %s - Zone: %s - Subnet: %s ", v.id, v.cidr.IP, v.nuage.Enterprise, v.nuage.User, v.nuage.Domain, v.nuage.Zone, v.nuage.NuageSubnetID)
+		log.Debugf("Network %s CIDR: %s Nuage Info: Organization: %s - User: %s - Domain: %s - Zone: %s - Subnet: %s ", v.id, v.cidr.IP, v.nuage.Organization, v.nuage.User, v.nuage.Domain, v.nuage.Zone, v.nuage.NuageSubnetID)
 	}
 }
 
@@ -107,14 +107,14 @@ func (d *driver) CreateNetwork(r *dockerSdk.CreateNetworkRequest) (err error) {
 		}
 	}
 
-	nuage := &nuageInfo{}
+	nuageParams := &nuageInfo{}
 
 	net := &network{
 		id:        r.NetworkID,
 		endpoints: endpointTable{},
 		cidr:      netCidr,
 		gateway:   netGw,
-		nuage:     nuage,
+		nuage:     nuageParams,
 	}
 
 	//Getting all the options from the User
@@ -126,31 +126,35 @@ func (d *driver) CreateNetwork(r *dockerSdk.CreateNetworkRequest) (err error) {
 		}
 
 		genericOpts, ok := v.(map[string]interface{})
-
 		if !ok {
-			continue
+			log.Debugf("Couldn't assert")
 		}
-
-		for key, val := range genericOpts {
-			log.Debugf("Libnetwork Opts Sent: [ %s ] Value: [ %s ]", key, val)
-			// Parse -o host_iface from libnetwork generic opts
-			switch key {
-			case "enterprise":
-				nuage.Enterprise = val.(string)
-			case "domain":
-				nuage.Domain = val.(string)
-			case "zone":
-				nuage.Zone = val.(string)
-			case "subnet":
-				nuage.NuageSubnetID = val.(string)
-			case "user":
-				nuage.User = val.(string)
+		networkOption := map[string]string{}
+		for k, v := range genericOpts {
+			converted, ok := v.(string)
+			if ok {
+				networkOption[k] = converted
+			} else {
+				log.Debugf("Couldn't parse Option to String [ %s ] [ %s ]", k, v)
 			}
-
 		}
+
+		err := parameterParsing(networkOption, nuageParams)
+		if err != nil {
+			return fmt.Errorf("Error to Parse Nuage Params: %s", err)
+		}
+
+		if validateNuageParams(nuageParams) != nil {
+			return fmt.Errorf("Error in Nuage Parameters: %s", err)
+		}
+
+		if err != nil {
+			return fmt.Errorf("Invalid Nuage Parameters: %s", err)
+		}
+
 	}
 
-	log.Infof("Creating Network %s CIDR: %s Nuage Info: Enterprise: %s - User: %s - Domain: %s - Zone: %s - Subnet: %s ", net.id, net.cidr.IP, nuage.Enterprise, nuage.User, nuage.Domain, nuage.Zone, nuage.NuageSubnetID)
+	log.Infof("Creating Network %s CIDR: %s Nuage Info: Organization: %s - User: %s - Domain: %s - Zone: %s - Subnet: %s ", net.id, net.cidr.IP, nuageParams.Organization, nuageParams.User, nuageParams.Domain, nuageParams.Zone, nuageParams.NuageSubnetID)
 	d.addNetwork(net)
 	printNetworks(d.networks)
 	return nil
@@ -327,7 +331,6 @@ func (d *driver) Join(r *dockerSdk.JoinRequest) (*dockerSdk.JoinResponse, error)
 	portMetadata[port.MetadataKeyZone] = networkInfo.nuage.Zone
 	portMetadata[port.MetadataKeyNetworkType] = "ipv4"
 	ip := endpointInfo.addr.String()
-	fmt.Println(ip)
 	portMetadata[port.MetadataKeyStaticIP] = ip
 
 	// Associate one veth port to entity
@@ -337,9 +340,9 @@ func (d *driver) Join(r *dockerSdk.JoinRequest) (*dockerSdk.JoinResponse, error)
 	}
 
 	// Create VM metadata
-	vmMetadata := make(map[entity.MetadataKey]string)
-	vmMetadata[entity.MetadataKeyUser] = networkInfo.nuage.User
-	vmMetadata[entity.MetadataKeyEnterprise] = networkInfo.nuage.Enterprise
+	containerMetadata := make(map[entity.MetadataKey]string)
+	containerMetadata[entity.MetadataKeyUser] = networkInfo.nuage.User
+	containerMetadata[entity.MetadataKeyEnterprise] = networkInfo.nuage.Organization
 
 	// Define ports associated with the VM
 	ports := []string{containerInfo["brport"]}
@@ -350,7 +353,7 @@ func (d *driver) Join(r *dockerSdk.JoinRequest) (*dockerSdk.JoinResponse, error)
 		Name:     containerInfo["name"],
 		Type:     entity.TypeDocker,
 		Ports:    ports,
-		Metadata: vmMetadata,
+		Metadata: containerMetadata,
 	}
 
 	err = d.vrsConnection.AddEntity(entityInfo)
@@ -373,7 +376,7 @@ func (d *driver) Join(r *dockerSdk.JoinRequest) (*dockerSdk.JoinResponse, error)
 
 	res := &dockerSdk.JoinResponse{
 		InterfaceName: *ifname,
-		//Gateway:               getID.gateway,
+		//Gateway:               networkInfo.gateway,
 		DisableGatewayService: true,
 	}
 	log.Debugf("Join response: %+v", res)
@@ -459,39 +462,67 @@ func (d *driver) existingNetChecks() error {
 				}
 			}
 
-			nuage := &nuageInfo{}
+			nuageParams := &nuageInfo{}
+
+			// Parse docker network -o opts
+			parameterParsing(n.Options, nuageParams)
 
 			nw := &network{
 				id:        n.ID,
 				endpoints: endpointTable{},
 				cidr:      netCidr,
 				gateway:   netGW,
-				nuage:     nuage,
+				nuage:     nuageParams,
 			}
 
-			// Parse docker network -o opts
-			for key, val := range n.Options {
-				// log.Debugf("Libnetwork Opts Sent: [ %s ] Value: [ %s ]", key, val)
-				// Parse -o host_iface from libnetwork generic opts
-				switch key {
-				case "enterprise":
-					nuage.Enterprise = val
-				case "domain":
-					nuage.Domain = val
-				case "zone":
-					nuage.Zone = val
-				case "subnet":
-					nuage.NuageSubnetID = val
-				case "user":
-					nuage.User = val
-				}
-				d.addNetwork(nw)
-			}
+			d.addNetwork(nw)
 		}
 	}
+
 	return nil
 }
 
 func truncateID(id string) string {
 	return id[:5]
+}
+
+// Parses all the NuageOptions out of the networkOptions map. Populate the nuageParams struct.
+func parameterParsing(networkOptions map[string]string, nuageParams *nuageInfo) (err error) {
+
+	for key, val := range networkOptions {
+
+		switch key {
+		case "organization":
+			nuageParams.Organization = val
+		case "domain":
+			nuageParams.Domain = val
+		case "zone":
+			nuageParams.Zone = val
+		case "subnet":
+			nuageParams.NuageSubnetID = val
+		case "user":
+			nuageParams.User = val
+		}
+	}
+
+	return nil
+}
+
+func validateNuageParams(nuageParams *nuageInfo) (err error) {
+	//Check that we Got an Org and User:
+	if nuageParams.Organization == "" || nuageParams.User == "" {
+		return fmt.Errorf("Organization or User required to create a NuageNet")
+	}
+
+	//Check that we got a Nuage Domain
+	if nuageParams.Domain == "" {
+		return fmt.Errorf("Domain Required to create a NuageNet")
+	}
+
+	if (nuageParams.Zone != "" && nuageParams.NuageSubnetID == "") ||
+		(nuageParams.Zone == "" && nuageParams.NuageSubnetID != "") {
+		return fmt.Errorf("If L3Domain, both Zone and Subnets are required")
+	}
+
+	return nil
 }
