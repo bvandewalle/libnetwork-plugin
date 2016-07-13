@@ -19,26 +19,26 @@ It implements the standard LibNetwork API through that socket.
 
 In order to run this plugin, there is the need to open an OVSDB connection to the VRS (This will be restricted to a file .sock in an upcoming version). In order to allow this on each VRS, the following command is required before starting the plugin. This is only required once on each VRS: Another port than 6633 can be chosen, in which case the config file for the plugin needs to reflect that.
 
-'''
+```
 bvandewa$ ovs-appctl -t ovsdb-server ovsdb-server/add-remote ptcp:6633
-'''
+```
 
 All the parameters are specified in a config file. By default that file is in 'nuage.cfg' in the same directory as the executable. An alternate file can be provided by a specific argument to the executable:
 
-'''
+```
 bvandewa$ ./plugin -f /etc/nuage/config.cfg
-'''
+```
 
 The configuration file follows the following format, with the following default value:
 
-'''
+```
 VrsEndpoint = "localhost"
 VrsPort = 6633
 VrsBridge = "alubr0"
 DockerEndpoint = "unix:///var/run/docker.sock"
 LogLevel = "Info" // Debug for more info
 Scope = "global"  // global for MH or local for Single Host
-'''
+```
 
 For a typical use-case, none of those values should have the need to be modified.
 
@@ -51,16 +51,16 @@ This use-case is configured with the configuration Scope="local".
 
 After starting the plugin, Docker API is used to create a network:
 
-'''
+```
 root@ubuntu:~# docker network create --driver=nuage -o organization=Enterprise -o domain=Domain -o zone=Zone -o subnet="Subnet 2" -o user=admin --subnet=10.21.59.0/24  MyNet
-'''
+```
 
 to link to a L3Domain in Nuage, the following parameters are required: enterprise,user,domain,zone,subnet.
 Furthermore, the CIDR and IPAM information must be exactly the same as in Nuage. See IPAM considerations below.
 
 Once the network is created, it can be seen and inspected:
 
-'''
+```
 root@ubuntu:~# docker network ls
 NETWORK ID          NAME                DRIVER
 e793da0854ce        MyNet               nuage               
@@ -68,9 +68,9 @@ e793da0854ce        MyNet               nuage
 cf0626f73c7c        docker_gwbridge     bridge              
 b8878a9f9d58        host                host                
 967ad3ccb5af        none                null  
-'''
+```
 
-'''
+```
 root@ubuntu:~# docker network inspect MyNet
 [
     {
@@ -115,13 +115,13 @@ root@ubuntu:~# docker network inspect MyNet
         "Labels": {}
     }
 ]
-'''
+```
 
 To start a Container with access to that network, the network name needs to be referenced during Container definition:
 
-'''
+```
 docker run -it --net MyNet nginx /bin/bash
-'''
+```
 
 This will trigger the creation of a vPort on Nuage, and the vPort should be visible and fully manageable from VSD API.
 
@@ -134,25 +134,24 @@ MultiHost Networking uses a backend store in order to propagate network informat
 In order to run multiHost networking, the Multiple Docker-Engines need to be started with a backend-Store, for example Consul:
 
 On Host1:
-'''
+```
 root@server1:~# docker daemon -D --cluster-store=consul://$CONSULSERVER:8500 --cluster-advertise=$server1:2376
-'''
+```
 
 On Host2:
-'''
+```
 root@server2:~# docker daemon -D --cluster-store=consul://$CONSULSERVER:8500 --cluster-advertise=$server2:2376
-'''
+```
 
 When creating Network on node1:
 
-'''
+```
 root@server1~# docker network create --driver=nuage -o organization=Enterprise -o domain=Domain -o zone=Zone -o subnet="Subnet 2" -o user=admin --subnet=10.21.59.0/24  MyNet
-'''
+```
 
 That network is now available and ready for consumption on node2:
 
-
-'''
+```
 root@server2:~# docker network ls
 NETWORK ID          NAME                DRIVER
 e793da0854ce        MyNet               nuage               
@@ -160,7 +159,7 @@ e793da0854ce        MyNet               nuage
 cf0626f73c7c        docker_gwbridge     bridge              
 b8878a9f9d58        host                host                
 967ad3ccb5af        none                null  
-'''
+```
 
 # IPAM considerations
 IPAM is fully managed by Docker (Eventually, Nuage will also implement an IPAM Driver), which means that the CIDR and IP information associated to the Docker Network MUST reflect the Network information in VSD.
