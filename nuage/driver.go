@@ -35,8 +35,7 @@ type Config struct {
 
 // Driver is the Nuage Driver
 type driver struct {
-	conf Config
-	dockerSdk.Driver
+	conf          Config
 	dclient       dockerclient.DockerClient
 	vrsConnection vrsSdk.VRSConnection
 	sync.Mutex
@@ -93,13 +92,14 @@ func printNetworks(net networkTable) {
 // CreateNetwork creates a new Network and links it to an Existing network based on the Options given
 func (d *driver) CreateNetwork(r *dockerSdk.CreateNetworkRequest) (err error) {
 
-	var netCidr *net.IPNet
-	var netGw string
-
 	log.Debugf("Network Create Called: [ %+v ]", r)
 
+	var netGw net.IP
+	var netCidr *net.IPNet
+
 	for _, v4 := range r.IPv4Data {
-		netGw = v4.Gateway
+
+		netGw, _, err = net.ParseCIDR(v4.Gateway)
 		_, netCidr, err = net.ParseCIDR(v4.Pool)
 
 		if err != nil {
@@ -321,7 +321,7 @@ func (d *driver) Join(r *dockerSdk.JoinRequest) (*dockerSdk.JoinResponse, error)
 	portAttributes := port.Attributes{
 		Platform: entity.TypeDocker,
 		MAC:      containerInfo["mac"],
-		Bridge:   "alubr0",
+		Bridge:   bridgeName,
 	}
 
 	// Create Port Metadata
@@ -375,9 +375,9 @@ func (d *driver) Join(r *dockerSdk.JoinRequest) (*dockerSdk.JoinResponse, error)
 	}
 
 	res := &dockerSdk.JoinResponse{
-		InterfaceName: *ifname,
-		//Gateway:               networkInfo.gateway,
-		DisableGatewayService: true,
+		InterfaceName:         *ifname,
+		Gateway:               networkInfo.gateway.String(),
+		DisableGatewayService: false,
 	}
 	log.Debugf("Join response: %+v", res)
 	log.Infof("Join successful for Container %s with IP %s", containerName, ip)
@@ -434,11 +434,23 @@ func (d *driver) Leave(r *dockerSdk.LeaveRequest) error {
 
 // DiscoverNew is not used by local scoped drivers
 func (d *driver) DiscoverNew(r *dockerSdk.DiscoveryNotification) error {
+	log.Debugf("DiscoverNew called %v", r)
 	return nil
 }
 
 // DiscoverDelete is not used by local scoped drivers
 func (d *driver) DiscoverDelete(r *dockerSdk.DiscoveryNotification) error {
+	log.Debugf("DiscoverDelete called %v", r)
+	return nil
+}
+
+func (d *driver) ProgramExternalConnectivity(r *dockerSdk.ProgramExternalConnectivityRequest) error {
+	log.Debugf("ProgramExternalConnectivity %v", r)
+	return nil
+}
+
+func (d *driver) RevokeExternalConnectivity(r *dockerSdk.RevokeExternalConnectivityRequest) error {
+	log.Debugf("RevokeExternalConn %v", r)
 	return nil
 }
 
@@ -450,15 +462,26 @@ func (d *driver) existingNetChecks() error {
 		return fmt.Errorf("unable to retrieve existing networks: %v", err)
 	}
 	var netCidr *net.IPNet
-	var netGW string
+	var netGW net.IP
 	for _, n := range existingNets {
 		// Only add the nuage nets.
 		if n.Driver == "nuage" {
 			for _, v4 := range n.IPAM.Config {
-				netGW = v4.Gateway
-				netCidr, err = parseIPNet(v4.Subnet)
+
+				_, netCidr, err = net.ParseCIDR(v4.Subnet)
 				if err != nil {
 					return fmt.Errorf("invalid cidr address in network [ %s ]: %v", v4.Subnet, err)
+				}
+
+				// netGW will only be populted if explicitely given at network creation
+				// If Empty, the default Gateway (First IP of subnet) is used
+				netGW = net.ParseIP(v4.Gateway)
+				if netGW == nil {
+					//Get first IP out of CIDR
+					netGW, err = ipIncrement(netCidr.IP)
+					if err != nil {
+						return fmt.Errorf("Error getting GW %s", err)
+					}
 				}
 			}
 

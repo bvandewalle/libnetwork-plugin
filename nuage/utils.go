@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
-
-	log "github.com/Sirupsen/logrus"
 )
 
 const (
@@ -32,8 +30,17 @@ func makeMac() (net.HardwareAddr, error) {
 
 }
 
+func ipIncrement(originalIP net.IP) (resultIP net.IP, err error) {
+	ip := originalIP.To4()
+	if ip == nil {
+		return nil, fmt.Errorf("Error Converting Gateway IP")
+	}
+	ip[3]++
+	return ip, nil
+}
+
 // Increment a subnet
-func ipIncrement(networkAddr net.IP) net.IP {
+func netIncrement(networkAddr net.IP) net.IP {
 	for i := 15; i >= 0; i-- {
 		b := networkAddr[i]
 		if b < 255 {
@@ -45,25 +52,6 @@ func ipIncrement(networkAddr net.IP) net.IP {
 		}
 	}
 	return networkAddr
-}
-
-// Check if a netlink interface exists in the default namespace
-func validateHostIface(ifaceStr string) bool {
-	_, err := net.InterfaceByName(ifaceStr)
-	if err != nil {
-		log.Debugf("The requested interface to delete [ %s ] was not found on the host: %s", ifaceStr, err)
-		return false
-	}
-	return true
-}
-
-// parseIPNet returns a net.IP from a network cidr in string representation
-func parseIPNet(s string) (*net.IPNet, error) {
-	ip, ipNet, err := net.ParseCIDR(s)
-	if err != nil {
-		return nil, err
-	}
-	return &net.IPNet{IP: ip, Mask: ipNet.Mask}, nil
 }
 
 // CreateVETHPair will help user create veth pairs to associate

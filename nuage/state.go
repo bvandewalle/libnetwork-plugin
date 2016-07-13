@@ -20,7 +20,7 @@ type nuageInfo struct {
 type network struct {
 	id        string
 	endpoints endpointTable
-	gateway   string
+	gateway   net.IP
 	nuage     *nuageInfo
 	sync.Mutex
 	cidr *net.IPNet
