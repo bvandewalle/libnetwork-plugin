@@ -3,12 +3,13 @@
 FROM golang
 
 # Copy the local package files to the container's workspace.
-ADD . /go/src/github.com/bvandewa/libn1
+ADD . /go/src/github.com/bvandewa/libnetwork-plugin
 
-# Build the outyet command inside the container.
-# (You may fetch or manage dependencies here,
-# either manually or with a tool like "godep".)
-RUN go get "github.com/docker/go-plugins-helpers/network"
-RUN go install github.com/bvandewa/libn1
+# This is still a private package
+ADD vendor/ /go/src/github.com/nuagenetworks/libvrsovsdb
 
-ENTRYPOINT /go/bin/libn1
+WORKDIR /go/src/github.com/bvandewa/libnetwork-plugin
+RUN go get -v
+RUN go install github.com/bvandewa/libnetwork-plugin
+
+ENTRYPOINT /go/bin/libnetwork-plugin
